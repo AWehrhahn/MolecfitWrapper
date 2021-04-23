@@ -1,0 +1,6 @@
+*.fits
+*.log
+*.rc
+*.rc.bak
+*.sof
+molecfit_wrapper.egg-info/
