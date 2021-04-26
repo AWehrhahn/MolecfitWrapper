@@ -531,7 +531,8 @@ class Molecfit(Esorex):
                     "CONTINUUM_N": "3",
                     "SILENT_EXTERNAL_BINS": "FALSE",
                     "SLIT_WIDTH_VALUE" : 0.1,
-                    "TMP_PATH": work_dir,
+                    # This expects a seperator '/' at the end...
+                    "TMP_PATH": work_dir + os.sep,
                 },
             )
 
