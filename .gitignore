@@ -4,7 +4,7 @@
 *.rc.bak
 *.sof
 molecfit_wrapper.egg-info/
-molecfit_wrapper/tapas.ipac
 molecfit_wrapper/molecfit.py
 .logfile
 telluriccorr_tmp_folder_*/*
+examples/tapas.ipac
