@@ -7,3 +7,4 @@ molecfit_wrapper.egg-info/
 molecfit_wrapper/tapas.ipac
 molecfit_wrapper/molecfit.py
 .logfile
+telluriccorr_tmp_folder_*/*

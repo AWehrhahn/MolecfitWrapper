@@ -342,6 +342,9 @@ class Molecfit(Esorex):
         column_flux="flux",
         column_err="err",
         wlg_to_micron=0.0001,
+        list_molec=None,
+        fit_molec=None,
+        rel_molec=None,
     ):
         super().__init__(recipe_dir=recipe_dir)
         #:str: Column name of the wavelength in the FITS file
@@ -358,6 +361,18 @@ class Molecfit(Esorex):
         self.output_dir = realpath(output_dir)
         #:str: The filename used by prepare_fits
         self.spectrum_filename = "input_spectrum.fits"
+        if list_molec is None:
+            list_molec = ["H2O","O3","O2","CO2","CH4","N2O"]
+        #:list: list of molecules to fit
+        self.list_molec = list_molec
+        if rel_molec is None:
+            rel_molec = [1. for _ in self.list_molec]
+        #:list: list with *initial* relative abundacnces of the gasses
+        self.rel_molec = rel_molec
+        if fit_molec is None:
+            fit_molec = [True for _ in self.list_molec]
+        #:list: list of flags whether to fit this molecule or not, same order as list_molec
+        self.fit_molec = fit_molec
 
     def prepare_sof(self, filename, data):
         """Create a new sof with the given data
@@ -418,18 +433,24 @@ class Molecfit(Esorex):
         -------
         filename : str
             the name of the new fits file
-        """
+        """        
         if err is None:
-            err = np.sqrt(flux)
-        col1 = fits.Column(name=self.column_wave, format="1D", array=wave)
-        col2 = fits.Column(name=self.column_flux, format="1D", array=flux)
-        col3 = fits.Column(name=self.column_err, format="1D", array=err)
-        cols = fits.ColDefs([col1, col2, col3])
-        tbhdu = fits.BinTableHDU.from_columns(cols)
+            err = [np.sqrt(f) for f in flux]
+        nseg = len(wave)
+        
         prihdr = copy.deepcopy(header)
         prihdu = fits.PrimaryHDU(header=prihdr)
-        thdulist = fits.HDUList([prihdu, tbhdu])
+        thdulist = [prihdu]
 
+        for i in range(nseg):
+            col1 = fits.Column(name=self.column_wave, format="1D", array=wave[i])
+            col2 = fits.Column(name=self.column_flux, format="1D", array=flux[i])
+            col3 = fits.Column(name=self.column_err, format="1D", array=err[i])
+            cols = fits.ColDefs([col1, col2, col3])
+            tbhdu = fits.BinTableHDU.from_columns(cols)
+            thdulist += [tbhdu]
+
+        thdulist = fits.HDUList(thdulist)
         os.makedirs(self.output_dir, exist_ok=True)
         filename = join(self.output_dir, self.spectrum_filename)
         thdulist.writeto(filename, overwrite=True)
@@ -498,14 +519,15 @@ class Molecfit(Esorex):
         """
         if wave_include is None:
             # If no wave include value is given, use the entire wavelength range
-            hdu = fits.open(science)
-            # TODO: which extensions?
-            for i in range(1, len(hdu)):
-                wave = hdu[1].data[self.column_wave]
-                wmin, wmax = np.nanmin(wave), np.nanmax(wave)
-                wmin, wmax = wmin * self.wlg_to_micron, wmax * self.wlg_to_micron
-                wave_include = [f"{wmin},{wmax}"]
-            wave_include = ",".join(wave_include)
+            with fits.open(science) as hdu:
+                # TODO: which extensions?
+                wave_include = []
+                for i in range(1, len(hdu)):
+                    wave = hdu[i].data[self.column_wave]
+                    wmin, wmax = np.nanmin(wave), np.nanmax(wave)
+                    wmin, wmax = wmin * self.wlg_to_micron, wmax * self.wlg_to_micron
+                    wave_include += [f"{wmin:.5},{wmax:.5}"]
+                wave_include = ",".join(wave_include)
 
         with NamedTemporaryFile("w", suffix=".sof") as sof_file, NamedTemporaryFile(
             "w", suffix=".rc"
@@ -514,14 +536,16 @@ class Molecfit(Esorex):
             self.prepare_sof(sof_fname, [(science, "SCIENCE"),])
 
             # TODO: most of these should be parameters of self
+            nseg = len(wave_include.split(",")) // 2
             rc_fname = rc_file.name
             self.prepare_rc(
                 rc_fname,
                 {
                     "WAVE_INCLUDE": wave_include,
-                    "LIST_MOLEC": "H2O,O3,O2,CO2,CH4,N2O",
-                    "FIT_MOLEC": "1,1,1,1,1,1",
-                    "REL_COL": "0.422,2.808,1.2,1.012,1.808,0.809",
+                    "MAP_REGIONS_TO_CHIP": ",".join([f"{i}" for i in range(1, nseg + 1)]),
+                    "LIST_MOLEC": ",".join(self.list_molec),
+                    "FIT_MOLEC": ",".join(["1" if fm else "0" for fm in self.fit_molec]),
+                    "REL_COL": ",".join([f"{r:.3}" for r in self.rel_molec]),
                     "COLUMN_LAMBDA": self.column_wave,
                     "COLUMN_FLUX": self.column_flux,
                     "COLUMN_DFLUX": self.column_err,

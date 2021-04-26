@@ -1,3 +1,7 @@
+from os.path import dirname, join
+import numpy as np
+from astropy.io import fits
+from astropy import constants as const
 from molecfit_wrapper.molecfit import Molecfit
 
 if __name__ ==  "__main__":
@@ -17,47 +21,33 @@ if __name__ ==  "__main__":
     wave = hdu[1].data["WAVE"][0]
 
     # Split it into smaller blocks for testing
-    nsteps = 10000
+    stepsize = 10000
+    nsteps = int(np.ceil(len(wave) / stepsize))
     wave = [
-        wave[nsteps * i : nsteps * (i + 1)] for i in range(int(np.ceil(len(wave) / nsteps)))
+        wave[stepsize * i : stepsize * (i + 1)] for i in range(nsteps)
     ]
     flux = [
-        flux[nsteps * i : nsteps * (i + 1)] for i in range(int(np.ceil(len(flux) / nsteps)))
+        flux[stepsize * i : stepsize * (i + 1)] for i in range(nsteps)
     ]
 
     # Take the last element since there is lots of tellurics to deal with
-    wave = wave[-1]
-    flux = flux[-1]
+    # wave = wave[-1]
+    # flux = flux[-1]
 
     # quick normalization
-    flux /= np.nanpercentile(flux, 99)
-
-    # Use TAPAS for comparison
-    ftapas = join(dirname(__file__), "tapas.ipac")
-    dtapas = np.genfromtxt(ftapas, comments="\\", skip_header=36)
-    wtapas, ftapas = dtapas[:, 0], dtapas[:, 1]
-    # convert to angstrom
-    wtapas *= 10
-    # Normalize
-    ftapas -= ftapas.min()
-    ftapas /= ftapas.max()
+    flux = [f / np.nanpercentile(f, 99) for f in flux]
 
     # Shift the wavelength to match the unshifted tapas wavelengths
     # TODO: where does this value come from? radial velocity of the star is only 16 km/s
     rv = -103
     c_light = const.c.to_value("km/s")
     rv_factor = np.sqrt((1 - rv / c_light) / (1 + rv / c_light))
-    wave *= rv_factor
-
-    # plt.plot(wave, flux)
-    # plt.plot(wtapas, ftapas)
-    # plt.show()
+    wave = [w * rv_factor for w in wave]
 
     # Step 1:
     # Since we modifed the flux and wavelength we need to write the data to a new datafile
     input_file = mf.prepare_fits(header, wave, flux)
-    wave_range = f"{wave[0] * 0.0001},{wave[-1] * 0.0001}"
-    output_model = mf.molecfit_model(input_file, wave_include=wave_range)
+    output_model = mf.molecfit_model(input_file)
 
     # Step 2:
     products = output_model["products"]
@@ -67,6 +57,17 @@ if __name__ ==  "__main__":
     output_calctrans = mf.molecfit_calctrans(
         input_file, atm_parameters, model_molecules, best_fit_parameters
     )
+
+    # Plot results
+    # Use TAPAS for comparison
+    ftapas = join(dirname(__file__), "tapas.ipac")
+    dtapas = np.genfromtxt(ftapas, comments="\\", skip_header=36)
+    wtapas, ftapas = dtapas[:, 0], dtapas[:, 1]
+    # convert to angstrom
+    wtapas *= 10
+    # Normalize
+    ftapas -= ftapas.min()
+    ftapas /= ftapas.max()
 
     lblrtm_results = output_calctrans["products"]["lblrtm_results"]
     hdu = fits.open(lblrtm_results)
