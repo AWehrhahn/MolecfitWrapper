@@ -4,3 +4,4 @@
 *.rc.bak
 *.sof
 molecfit_wrapper.egg-info/
+molecfit_wrapper/tapas.ipac
