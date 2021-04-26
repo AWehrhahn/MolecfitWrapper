@@ -5,3 +5,4 @@
 *.sof
 molecfit_wrapper.egg-info/
 molecfit_wrapper/tapas.ipac
+molecfit_wrapper/molecfit.py
