@@ -595,8 +595,9 @@ class Molecfit(Esorex):
             Dictionary with the recipe results
         """
         # each extension is one segment, except for the primary
-        nseg = len(fits.open(science))
-        mapping = ",".join([f"{i}" for i in range(1, nseg + 1)])
+        with fits.open(science) as hdu:
+            nseg = len(hdu)
+        mapping = ",".join([f"{i}" for i in range(1, nseg)])
         with NamedTemporaryFile("w", suffix=".sof") as sof_file, NamedTemporaryFile(
             "w", suffix=".rc"
         ) as rc_file:
