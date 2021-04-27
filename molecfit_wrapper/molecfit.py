@@ -626,7 +626,7 @@ class Molecfit(Esorex):
         # each extension is one segment, except for the primary
         with fits.open(science) as hdu:
             nseg = len(hdu)
-        mapping = ",".join([f"{i}" for i in range(1, nseg)])
+        mapping = [i for i in range(1, nseg)])
         with NamedTemporaryFile("w", suffix=".sof") as sof_file, NamedTemporaryFile(
             "w", suffix=".rc"
         ) as rc_file:
