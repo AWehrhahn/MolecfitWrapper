@@ -3,6 +3,7 @@ import configparser
 import copy
 import os
 import re
+import unicodedata
 import subprocess
 from os import getcwd
 from os.path import basename, dirname, join, realpath, splitext
@@ -64,6 +65,17 @@ class RecipeConfig(dict):
             default[key] = value
         return default
 
+    def unparse_value(self, value, inverse):
+        if isinstance(value, (list, tuple)):
+            list_inverse = {True: "1", False: "0"}
+            value = [self.unparse_value(v, list_inverse) for v in value]
+            value = ",".join(value)
+        elif value in inverse.keys():
+            value = inverse[value]
+        else:
+            value = str(value)
+        return value
+
     def unparse(self, parameters):
         """
         Similar to parse, but in reverse it replaces the values in parameters
@@ -82,10 +94,7 @@ class RecipeConfig(dict):
         default = parameters.copy()
         inverse = self.replacement_inverse
         for key, value in default.items():
-            if value in inverse.keys():
-                value = inverse[value]
-            else:
-                value = str(value)
+            value = self.unparse_value(value, inverse)
             default[key] = value
         return default
 
@@ -222,17 +231,44 @@ class Esorex:
     For full documentation on esorex see: https://www.eso.org/sci/software/cpl/esorex.html
     """
 
-    def __init__(self, esorex_exec=None, recipe_dir=None):
+    def __init__(self, esorex_exec=None, recipe_dir=None, output_dir=None):
         if esorex_exec is None:
             exorex_exec = "esorex"
         #:str: executable to call, by default "esorex"
         self.esorex_exec = esorex_exec
+        if recipe_dir is not None:
+            recipe_dir = realpath(recipe_dir)
         #:str: location of recipe files, overrides the --recipe-dir option and the environment variable when set
         self.recipe_dir = recipe_dir
+        if output_dir is not None:
+            output_dir = realpath(output_dir)
+        #:str: location to place the output files. Note that the way esorex operates it will create the output files in the working directory and then copy them to the specified location at the end of the recipe
+        self.output_dir = output_dir
         #:dict: available recipes
         self.recipes = self.get_recipes()
         #:dict: default parameters for each recipe
         self.parameters = {r: self.get_default_parameters(r) for r in self.recipes}
+
+    def slugify(self, value, allow_unicode=False):
+        """
+        Taken from https://github.com/django/django/blob/master/django/utils/text.py
+        Convert to ASCII if 'allow_unicode' is False. Convert spaces or repeated
+        dashes to single dashes. Remove characters that aren't alphanumerics,
+        underscores, or hyphens. Convert to lowercase. Also strip leading and
+        trailing whitespace, dashes, and underscores.
+        """
+        value = str(value)
+        if allow_unicode:
+            value = unicodedata.normalize("NFKC", value)
+        else:
+            value = (
+                unicodedata.normalize("NFKD", value)
+                .encode("ascii", "ignore")
+                .decode("ascii")
+            )
+        value = re.sub(r"[^\w\s-]", "", value.lower())
+        value = re.sub(r"[-\s]+", "-", value).strip("-_")
+        return value
 
     def esorex(self, recipe, esorex_options=(), recipe_options=(), sof=""):
         """
@@ -263,6 +299,16 @@ class Esorex:
         # Add fixed options from self
         if self.recipe_dir is not None:
             esorex_options = (f"--recipe-dir={self.recipe_dir}", *esorex_options)
+        if self.output_dir is not None:
+            os.makedirs(self.output_dir, exist_ok=True)
+            esorex_options = (
+                f"--output-dir={self.output_dir}",
+                f"--log-dir={self.output_dir}",
+                *esorex_options,
+            )
+        # Add logfile name
+        logfile = self.slugify(recipe)
+        esorex_options = (f"--log-file={logfile}.log", *esorex_options)
         # Assemble the command line arguments
         command = ["esorex", *esorex_options, recipe, *recipe_options, sof]
         result = subprocess.run(command, capture_output=True)
@@ -307,6 +353,10 @@ class Esorex:
         lines = [l[2:] for l in lines]
 
         self.recipes = {}
+        if len(lines) == 0:
+            # There probably is some issue with the recipe dir
+            return self.recipes
+
         entry = None
         for line in lines:
             if entry is None:
@@ -333,45 +383,29 @@ class Molecfit(Esorex):
     For documentation on Molecfit see: https://www.eso.org/sci/software/pipelines/skytools/molecfit
     """
 
-    def __init__(
-        self,
-        recipe_dir=None,
-        output_dir=None,
-        column_wave="lambda",
-        column_flux="flux",
-        column_err="err",
-        wlg_to_micron=0.0001,
-        list_molec=None,
-        fit_molec=None,
-        rel_molec=None,
-    ):
-        super().__init__(recipe_dir=recipe_dir)
-        #:str: Column name of the wavelength in the FITS file
-        self.column_wave = column_wave
-        #:str: Column name of the flux in the FITS file
-        self.column_flux = column_flux
-        #:str: Column name of the flux uncertainties in the FITS file
-        self.column_err = column_err
-        #:float: factor to convert the wavelength in the file to micron
-        self.wlg_to_micron = wlg_to_micron
-        if output_dir is None:
-            output_dir = join(dirname(__file__), "data")
-        #:str: Directory to store intermediary and output data products
-        self.output_dir = realpath(output_dir)
+    def __init__(self, esorex_exec=None, recipe_dir=None, output_dir=None, **kwargs):
+        super().__init__(
+            esorex_exec=esorex_exec, recipe_dir=recipe_dir, output_dir=output_dir
+        )
         #:str: The filename used by prepare_fits
         self.spectrum_filename = "input_spectrum.fits"
-        if list_molec is None:
-            list_molec = ["H2O", "O3", "O2", "CO2", "CH4", "N2O"]
+
+        # Recipe 'molecfit_model' default parameters
+        #:str: column name for the flux uncertainties
+        kwargs.setdefault("column_dflux", "error")
+        kwargs.setdefault("silent_external_bins", False)
         #:list: list of molecules to fit
-        self.list_molec = list_molec
-        if rel_molec is None:
-            rel_molec = [1.0 for _ in self.list_molec]
+        kwargs.setdefault("list_molec", ["H2O", "O3", "O2", "CO2", "CH4", "N2O"])
         #:list: list with *initial* relative abundacnces of the gasses
-        self.rel_molec = rel_molec
-        if fit_molec is None:
-            fit_molec = [True for _ in self.list_molec]
+        kwargs.setdefault("rel_molec", [1.0 for _ in kwargs["list_molec"]])
         #:list: list of flags whether to fit this molecule or not, same order as list_molec
-        self.fit_molec = fit_molec
+        kwargs.setdefault("fit_molec", [True for _ in kwargs["list_molec"]])
+
+        for recipe in self.recipes.keys():
+            available_parameters = self.parameters[recipe].keys()
+            for key, value in kwargs.items():
+                if key in available_parameters:
+                    self.parameters[recipe][key] = value
 
     def prepare_sof(self, filename, data):
         """Create a new sof with the given data
@@ -442,9 +476,21 @@ class Molecfit(Esorex):
         thdulist = [prihdu]
 
         for i in range(nseg):
-            col1 = fits.Column(name=self.column_wave, format="1D", array=wave[i])
-            col2 = fits.Column(name=self.column_flux, format="1D", array=flux[i])
-            col3 = fits.Column(name=self.column_err, format="1D", array=err[i])
+            col1 = fits.Column(
+                name=self.parameters["molecfit_model"]["column_lambda"],
+                format="1D",
+                array=wave[i],
+            )
+            col2 = fits.Column(
+                name=self.parameters["molecfit_model"]["column_flux"],
+                format="1D",
+                array=flux[i],
+            )
+            col3 = fits.Column(
+                name=self.parameters["molecfit_model"]["column_dflux"],
+                format="1D",
+                array=err[i],
+            )
             cols = fits.ColDefs([col1, col2, col3])
             tbhdu = fits.BinTableHDU.from_columns(cols)
             thdulist += [tbhdu]
@@ -478,9 +524,6 @@ class Molecfit(Esorex):
 
         # Run molecfit with esorex
         esorex_options = [
-            f"--log-dir={self.output_dir}",
-            f"--log-file={logfile}",
-            f"--output-dir={self.output_dir}",
             f"--recipe-config={rc_fname}",
         ]
 
@@ -516,15 +559,19 @@ class Molecfit(Esorex):
         result : dict
             Dictionary with the recipe results
         """
+        params = self.parameters["molecfit_model"]
         if wave_include is None:
             # If no wave include value is given, use the entire wavelength range
             with fits.open(science) as hdu:
                 # TODO: which extensions?
                 wave_include = []
                 for i in range(1, len(hdu)):
-                    wave = hdu[i].data[self.column_wave]
+                    wave = hdu[i].data[params["column_lambda"]]
                     wmin, wmax = np.nanmin(wave), np.nanmax(wave)
-                    wmin, wmax = wmin * self.wlg_to_micron, wmax * self.wlg_to_micron
+                    wmin, wmax = (
+                        wmin * params["wlg_to_micron"],
+                        wmax * params["wlg_to_micron"],
+                    )
                     wave_include += [f"{wmin:.5},{wmax:.5}"]
                 wave_include = ",".join(wave_include)
 
@@ -537,36 +584,18 @@ class Molecfit(Esorex):
             # TODO: most of these should be parameters of self
             nseg = len(wave_include.split(",")) // 2
             rc_fname = rc_file.name
-            self.prepare_rc(
-                rc_fname,
-                {
-                    "WAVE_INCLUDE": wave_include,
-                    "MAP_REGIONS_TO_CHIP": ",".join(
-                        [f"{i}" for i in range(1, nseg + 1)]
-                    ),
-                    "LIST_MOLEC": ",".join(self.list_molec),
-                    "FIT_MOLEC": ",".join(
-                        ["1" if fm else "0" for fm in self.fit_molec]
-                    ),
-                    "REL_COL": ",".join([f"{r:.3}" for r in self.rel_molec]),
-                    "COLUMN_LAMBDA": self.column_wave,
-                    "COLUMN_FLUX": self.column_flux,
-                    "COLUMN_DFLUX": self.column_err,
-                    "WLG_TO_MICRON": self.wlg_to_micron,
-                    "WAVELENGTH_FRAME": "VAC",
-                    "FIT_CONTINUUM": "1",
-                    "CONTINUUM_N": "3",
-                    "SILENT_EXTERNAL_BINS": "FALSE",
-                    "SLIT_WIDTH_VALUE": 0.1,
-                    # TODO: we would like to define our own temporary directory using TemporaryDirectory
-                    # But this breaks the next step molecfit_calctrans, as it tries (and fails) to reuse the
-                    # same directory again (it has since been deleted)
-                    # We could fix this by keeping the directory around until both are done
-                    # but this is one level of abstraction higher than this...
-                    # This expects a seperator '/' at the end...
-                    # "TMP_PATH": work_dir + os.sep,
-                },
-            )
+            # TODO: we would like to define our own temporary directory using TemporaryDirectory
+            # But this breaks the next step molecfit_calctrans, as it tries (and fails) to reuse the
+            # same directory again (it has since been deleted)
+            # We could fix this by keeping the directory around until both are done
+            # but this is one level of abstraction higher than this...
+            # This expects a seperator '/' at the end...
+            # "TMP_PATH": work_dir + os.sep,
+            self.parameters["molecfit_model"]["wave_include"] = wave_include
+            self.parameters["molecfit_model"]["map_regions_to_chip"] = [
+                i for i in range(1, nseg + 1)
+            ]
+            self.prepare_rc(rc_fname, self.parameters["molecfit_model"])
 
             result = self.execute_recipe("molecfit_model", rc_fname, sof_fname)
 
@@ -612,15 +641,11 @@ class Molecfit(Esorex):
                 ],
             )
             rc_fname = rc_file.name
-            self.prepare_rc(
-                rc_fname,
-                {
-                    "CALCTRANS_MAPPING_KERNEL": mapping,
-                    "MAPPING_ATMOSPHERIC": mapping,
-                    "MAPPING_CONVOLVE": mapping,
-                    "USE_INPUT_KERNEL": "FALSE",
-                },
-            )
+            self.parameters["molecfit_calctrans"]["calctrans_mapping_kernel"] = mapping
+            self.parameters["molecfit_calctrans"]["mapping_atmospheric"] = mapping
+            self.parameters["molecfit_calctrans"]["mapping_convolve"] = mapping
+            self.parameters["molecfit_calctrans"]["use_input_kernel"] = False
+            self.prepare_rc(rc_fname, self.parameters["molecfit_calctrans"])
 
             result = self.execute_recipe("molecfit_calctrans", rc_fname, sof_fname)
 

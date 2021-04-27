@@ -9,10 +9,12 @@ from molecfit_wrapper.molecfit import Molecfit
 if __name__ == "__main__":
     mf = Molecfit(
         recipe_dir="/home/ansgar/ESO/esoreflex/lib/esopipes-plugins",
-        column_wave="WAVE",
+        output_dir=realpath(join(dirname(__file__), "data")),
+        column_lambda="WAVE",
         column_flux="FLUX",
-        column_err="ERR",
+        column_dflux="ERR",
         wlg_to_micron=0.0001,
+        slit_width_value=0.1,
     )
 
     # Read the input file
@@ -45,7 +47,7 @@ if __name__ == "__main__":
     # Step 1:
     # Since we modifed the flux and wavelength we need to write the data to a new datafile
     input_file = mf.prepare_fits(header, wave, flux)
-    # output_model = mf.molecfit_model(input_file)
+    output_model = mf.molecfit_model(input_file)
     # products = output_model["products"]
     # atm_parameters = products["atm_parameters"]
     # model_molecules = products["model_molecules"]
