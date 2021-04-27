@@ -70,7 +70,9 @@ class RecipeConfig(dict):
             list_inverse = {True: "1", False: "0"}
             value = [self.unparse_value(v, list_inverse) for v in value]
             value = ",".join(value)
-        elif value in inverse.keys():
+        elif any([value is key for key in inverse]):
+            # Turns out that True == 1 and False == 0, as far as the dictionary keys are concerned
+            # but we want to treat them as different objects, so we have to use is
             value = inverse[value]
         else:
             value = str(value)
@@ -91,9 +93,10 @@ class RecipeConfig(dict):
         parameters : dict
             The same dictionary but with all strings
         """
-        default = parameters.copy()
+        default = {}
         inverse = self.replacement_inverse
-        for key, value in default.items():
+        for key, value in parameters.items():
+            key = key.upper()
             value = self.unparse_value(value, inverse)
             default[key] = value
         return default
@@ -141,11 +144,10 @@ class RecipeConfig(dict):
             filename of the destination
         """
         # We copy self.parameters, since unparse works in place
-        params = self.copy()
-        params = self.unparse(params)
+        params = self.unparse(self)
         content = []
         for key, value in params.items():
-            content += [f"{key} = {value}\n"]
+            content += [f"{key}={value}\n"]
 
         with open(filename, "w") as f:
             f.writelines(content)
@@ -539,6 +541,10 @@ class Molecfit(Esorex):
 
         with open(join(self.output_dir, logfile)) as f:
             result["log"] = f.read()
+        with open(sof_fname) as f:
+                result["sof"] = f.read()
+        with open(rc_fname) as f:
+                result["parameters"] = f.read()
         return result
 
     def molecfit_model(self, science, wave_include=None):
@@ -595,6 +601,7 @@ class Molecfit(Esorex):
             self.parameters["molecfit_model"]["map_regions_to_chip"] = [
                 i for i in range(1, nseg + 1)
             ]
+            self.parameters["molecfit_model"]["chip_extensions"] = True
             self.prepare_rc(rc_fname, self.parameters["molecfit_model"])
 
             result = self.execute_recipe("molecfit_model", rc_fname, sof_fname)
@@ -631,7 +638,7 @@ class Molecfit(Esorex):
             "w", suffix=".rc"
         ) as rc_file:
             sof_fname = sof_file.name
-            self.prepare_sof(
+            sof = self.prepare_sof(
                 sof_fname,
                 [
                     (science, "SCIENCE"),
@@ -643,9 +650,11 @@ class Molecfit(Esorex):
             rc_fname = rc_file.name
             self.parameters["molecfit_calctrans"]["calctrans_mapping_kernel"] = mapping
             self.parameters["molecfit_calctrans"]["mapping_atmospheric"] = mapping
-            self.parameters["molecfit_calctrans"]["mapping_convolve"] = mapping
+            self.parameters["molecfit_calctrans"]["mapping_convolve"] = [1 for _ in mapping]
             self.parameters["molecfit_calctrans"]["use_input_kernel"] = False
-            self.prepare_rc(rc_fname, self.parameters["molecfit_calctrans"])
+            self.parameters["molecfit_calctrans"]["chip_extensions"] = True
+
+            rc = self.prepare_rc(rc_fname, self.parameters["molecfit_calctrans"])
 
             result = self.execute_recipe("molecfit_calctrans", rc_fname, sof_fname)
 
