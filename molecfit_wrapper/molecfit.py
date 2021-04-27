@@ -11,7 +11,6 @@ from tempfile import NamedTemporaryFile, TemporaryDirectory
 import numpy as np
 from astropy import constants as const
 from astropy.io import fits
-import matplotlib.pyplot as plt
 
 
 class RecipeConfig(dict):
@@ -362,11 +361,11 @@ class Molecfit(Esorex):
         #:str: The filename used by prepare_fits
         self.spectrum_filename = "input_spectrum.fits"
         if list_molec is None:
-            list_molec = ["H2O","O3","O2","CO2","CH4","N2O"]
+            list_molec = ["H2O", "O3", "O2", "CO2", "CH4", "N2O"]
         #:list: list of molecules to fit
         self.list_molec = list_molec
         if rel_molec is None:
-            rel_molec = [1. for _ in self.list_molec]
+            rel_molec = [1.0 for _ in self.list_molec]
         #:list: list with *initial* relative abundacnces of the gasses
         self.rel_molec = rel_molec
         if fit_molec is None:
@@ -433,11 +432,11 @@ class Molecfit(Esorex):
         -------
         filename : str
             the name of the new fits file
-        """        
+        """
         if err is None:
             err = [np.sqrt(f) for f in flux]
         nseg = len(wave)
-        
+
         prihdr = copy.deepcopy(header)
         prihdu = fits.PrimaryHDU(header=prihdr)
         thdulist = [prihdu]
@@ -542,9 +541,13 @@ class Molecfit(Esorex):
                 rc_fname,
                 {
                     "WAVE_INCLUDE": wave_include,
-                    "MAP_REGIONS_TO_CHIP": ",".join([f"{i}" for i in range(1, nseg + 1)]),
+                    "MAP_REGIONS_TO_CHIP": ",".join(
+                        [f"{i}" for i in range(1, nseg + 1)]
+                    ),
                     "LIST_MOLEC": ",".join(self.list_molec),
-                    "FIT_MOLEC": ",".join(["1" if fm else "0" for fm in self.fit_molec]),
+                    "FIT_MOLEC": ",".join(
+                        ["1" if fm else "0" for fm in self.fit_molec]
+                    ),
                     "REL_COL": ",".join([f"{r:.3}" for r in self.rel_molec]),
                     "COLUMN_LAMBDA": self.column_wave,
                     "COLUMN_FLUX": self.column_flux,
@@ -554,7 +557,7 @@ class Molecfit(Esorex):
                     "FIT_CONTINUUM": "1",
                     "CONTINUUM_N": "3",
                     "SILENT_EXTERNAL_BINS": "FALSE",
-                    "SLIT_WIDTH_VALUE" : 0.1,
+                    "SLIT_WIDTH_VALUE": 0.1,
                     # TODO: we would like to define our own temporary directory using TemporaryDirectory
                     # But this breaks the next step molecfit_calctrans, as it tries (and fails) to reuse the
                     # same directory again (it has since been deleted)
@@ -590,7 +593,10 @@ class Molecfit(Esorex):
         -------
         result : dict
             Dictionary with the recipe results
-        """        
+        """
+        # each extension is one segment, except for the primary
+        nseg = len(fits.open(science))
+        mapping = ",".join([f"{i}" for i in range(1, nseg + 1)])
         with NamedTemporaryFile("w", suffix=".sof") as sof_file, NamedTemporaryFile(
             "w", suffix=".rc"
         ) as rc_file:
@@ -608,9 +614,9 @@ class Molecfit(Esorex):
             self.prepare_rc(
                 rc_fname,
                 {
-                    "CALCTRANS_MAPPING_KERNEL": "1,1",
-                    "MAPPING_ATMOSPHERIC": "1,1",
-                    "MAPPING_CONVOLVE": "1,1",
+                    "CALCTRANS_MAPPING_KERNEL": mapping,
+                    "MAPPING_ATMOSPHERIC": mapping,
+                    "MAPPING_CONVOLVE": mapping,
                     "USE_INPUT_KERNEL": "FALSE",
                 },
             )

@@ -1,10 +1,12 @@
-from os.path import dirname, join
+from os.path import dirname, join, realpath
+
+import matplotlib.pyplot as plt
 import numpy as np
-from astropy.io import fits
 from astropy import constants as const
+from astropy.io import fits
 from molecfit_wrapper.molecfit import Molecfit
 
-if __name__ ==  "__main__":
+if __name__ == "__main__":
     mf = Molecfit(
         recipe_dir="/home/ansgar/ESO/esoreflex/lib/esopipes-plugins",
         column_wave="WAVE",
@@ -23,12 +25,8 @@ if __name__ ==  "__main__":
     # Split it into smaller blocks for testing
     stepsize = 10000
     nsteps = int(np.ceil(len(wave) / stepsize))
-    wave = [
-        wave[stepsize * i : stepsize * (i + 1)] for i in range(nsteps)
-    ]
-    flux = [
-        flux[stepsize * i : stepsize * (i + 1)] for i in range(nsteps)
-    ]
+    wave = [wave[stepsize * i : stepsize * (i + 1)] for i in range(nsteps)]
+    flux = [flux[stepsize * i : stepsize * (i + 1)] for i in range(nsteps)]
 
     # Take the last element since there is lots of tellurics to deal with
     # wave = wave[-1]
@@ -47,13 +45,23 @@ if __name__ ==  "__main__":
     # Step 1:
     # Since we modifed the flux and wavelength we need to write the data to a new datafile
     input_file = mf.prepare_fits(header, wave, flux)
-    output_model = mf.molecfit_model(input_file)
+    # output_model = mf.molecfit_model(input_file)
+    # products = output_model["products"]
+    # atm_parameters = products["atm_parameters"]
+    # model_molecules = products["model_molecules"]
+    # best_fit_parameters = products["best_fit_parameters"]
+
+    atm_parameters = realpath(
+        join(dirname(__file__), "../molecfit_wrapper/data/ATM_PARAMETERS.fits")
+    )
+    model_molecules = realpath(
+        join(dirname(__file__), "../molecfit_wrapper/data/MODEL_MOLECULES.fits")
+    )
+    best_fit_parameters = realpath(
+        join(dirname(__file__), "../molecfit_wrapper/data/BEST_FIT_PARAMETERS.fits")
+    )
 
     # Step 2:
-    products = output_model["products"]
-    atm_parameters = products["atm_parameters"]
-    model_molecules = products["model_molecules"]
-    best_fit_parameters = products["best_fit_parameters"]
     output_calctrans = mf.molecfit_calctrans(
         input_file, atm_parameters, model_molecules, best_fit_parameters
     )
@@ -74,10 +82,10 @@ if __name__ ==  "__main__":
     wmf = hdu[1].data["lambda"] * 10000
     fmf = hdu[1].data["flux"]
 
-    plt.plot(wave, flux, label="Observation")
+    plt.plot(wave[-1], flux[-1], label="Observation")
     plt.plot(wmf, fmf, label="Molecfit")
     plt.plot(wtapas, ftapas, label="Tapas")
-    plt.xlim(wave[0], wave[-1])
+    plt.xlim(wave[-1][0], wave[-1][-1])
     plt.legend()
     plt.show()
 
